@@ -1,0 +1,41 @@
+name: ETLE Sync Pelanggaran Tersanggah
+
+on:
+  # Menjalankan secara otomatis setiap jam 06:00 & 18:00 WIB (23:00 & 11:00 UTC)
+  schedule:
+    - cron: '0 23,11 * * *'
+  
+  # Memungkinkan untuk dijalankan secara manual kapan saja dari tombol 'Run workflow'
+  workflow_dispatch:
+
+jobs:
+  run-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright Browsers & System Dependencies
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run ETLE Sync Script
+        env:
+          EMAIL_ETLE: ${{ secrets.EMAIL_ETLE }}
+          PASSWORD_ETLE: ${{ secrets.PASSWORD_ETLE }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          WA_TARGET: ${{ secrets.WA_TARGET }}
+          FONNTE_TOKEN: ${{ secrets.FONNTE_TOKEN }}
+        run: python main.py
