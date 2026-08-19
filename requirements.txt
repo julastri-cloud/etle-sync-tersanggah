@@ -1,0 +1,4 @@
+gspread
+google-auth
+playwright
+requests
