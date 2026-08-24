@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import re
 import atexit
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -47,7 +48,6 @@ SHEET_NAME = "Pelanggaran Tersanggah"
 
 WIB = ZoneInfo("Asia/Jakarta")
 
-# Rentang Tanggal API: Tanggal 1 bulan berjalan s/d Besok Jam 00:00 (Mencakup full 24 jam hari ini)
 now_wib = datetime.now(WIB)
 DATE_FROM = now_wib.replace(day=1).strftime("%d-%m-%Y 00:00")
 DATE_TO = (now_wib + timedelta(days=1)).strftime("%d-%m-%Y 00:00")
@@ -83,13 +83,13 @@ HEADERS = [
 # ============================================================
 
 def log(message):
-    print(
-        f"[{datetime.now(WIB).strftime('%Y-%m-%d %H:%M:%S')}] {message}",
-        flush=True
-    )
+    print(f"[{datetime.now(WIB).strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
 def clean(value):
-    return str(value).strip() if value is not None else ""
+    if value is None:
+        return ""
+    val_str = str(value).strip()
+    return "" if val_str.lower() in ["none", "null", "undefined"] else val_str
 
 def cleanup_credentials():
     if os.path.exists(CREDENTIALS_FILE):
@@ -108,13 +108,9 @@ atexit.register(cleanup_credentials)
 
 def validate_environment():
     if not EMAIL_ETLE or not PASSWORD_ETLE or not GCP_SA_KEY:
-        raise RuntimeError(
-            "Secret EMAIL_ETLE, PASSWORD_ETLE, atau GCP_SA_KEY belum diset."
-        )
-    
+        raise RuntimeError("Secret EMAIL_ETLE, PASSWORD_ETLE, atau GCP_SA_KEY belum diset.")
     if not WA_TARGET or not FONNTE_TOKEN:
         log("PERINGATAN: WA_TARGET/FONNTE_TOKEN kosong - notifikasi WA dilewati.")
-    
     log("Environment berhasil divalidasi.")
 
 def create_credentials_file():
@@ -138,25 +134,14 @@ def get_sheet():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    log("Otentikasi Google Sheets...")
     creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
     client = gspread.authorize(creds)
-    
-    log("Membuka spreadsheet...")
     spreadsheet = client.open_by_key(SPREADSHEET_ID)
     
     try:
         sheet = spreadsheet.worksheet(SHEET_NAME)
-        log(f"Worksheet '{SHEET_NAME}' ditemukan.")
     except gspread.WorksheetNotFound:
-        log(f"Worksheet '{SHEET_NAME}' belum ada. Membuat worksheet baru...")
-        sheet = spreadsheet.add_worksheet(
-            title=SHEET_NAME,
-            rows=1000,
-            cols=len(HEADERS)
-        )
-        log("Worksheet baru berhasil dibuat.")
-        
+        sheet = spreadsheet.add_worksheet(title=SHEET_NAME, rows=1000, cols=len(HEADERS))
     return sheet
 
 def prepare_sheet(sheet):
@@ -190,7 +175,6 @@ def login(page):
     try:
         page.wait_for_url("**/admin-etle/**", timeout=30000)
     except Exception:
-        log("Redirect URL timeout, melanjutkan...")
         page.wait_for_timeout(2000)
         
     log(f"Login selesai. URL aktif: {page.url}")
@@ -202,7 +186,6 @@ def open_tersanggah_page(page):
 
 def request_api(page):
     timestamp = int(time.time() * 1000)
-    
     api_url = (
         f"{API_URL}"
         f"?dateFrom={requests.utils.quote(DATE_FROM)}"
@@ -226,25 +209,15 @@ def request_api(page):
                     }
                 });
                 const text = await response.text();
-                return {
-                    success: true,
-                    status: response.status,
-                    contentType: response.headers.get("content-type") || "",
-                    body: text
-                };
+                return { success: true, status: response.status, body: text };
             } catch (error) {
                 return { success: false, status: 0, error: String(error) };
             }
         }
     """, api_url)
 
-    if not result["success"]:
-        raise RuntimeError(f"Fetch API gagal: {result.get('error')}")
-
-    if result["status"] != 200 or not result["body"].strip():
-        raise RuntimeError(
-            f"API HTTP {result['status']}. Body: {result['body'][:300]}"
-        )
+    if not result["success"] or result["status"] != 200:
+        raise RuntimeError(f"Fetch API gagal dengan status {result.get('status')}")
 
     parsed = json.loads(result["body"])
     
@@ -257,71 +230,86 @@ def request_api(page):
                 
     raise RuntimeError("Struktur JSON API tidak valid.")
 
-def extract_field(page, label):
+def parse_detail_from_page(page):
     """
-    Helper untuk mencari pasangan Key-Value dari teks UI
+    Scrape data menggunakan JavaScript langsung dari DOM Halaman Detail
     """
-    try:
-        loc = page.locator(f'*:text("{label}") + *')
-        if loc.count() > 0:
-            return clean(loc.first.inner_text().strip(" :"))
-    except Exception:
-        pass
-    return ""
+    return page.evaluate("""
+        () => {
+            const bodyText = document.body.innerText || "";
+            
+            const findValue = (label) => {
+                const regex = new RegExp(label + "\\\\s*:\\\\s*([^\\\\n]+)", "i");
+                const match = bodyText.match(regex);
+                return match ? match[1].trim() : "";
+            };
 
-def get_detail_info(page, item_id):
-    """
-    Scrape data lengkap dari terkonfirmasi_detail.php?id={item_id}
-    """
-    if not item_id:
-        return {}
-        
-    url_detail = f"{URL_DETAIL_BASE}?id={item_id}&status_konfirmasi=Tersanggah"
-    
-    try:
-        page.goto(url_detail, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(1000)
-        
-        # Ekstrak seluruh field detail yang tersedia
-        alasan = extract_field(page, "Alasan Disanggah")
-        keterangan = extract_field(page, "Keterangan Sanggahan")
-        pasal = extract_field(page, "Pasal")
-        nama_pemilik = extract_field(page, "Nama Pemilik")
-        alamat_pemilik = extract_field(page, "Alamat")
-        merk = extract_field(page, "Merk")
-        model = extract_field(page, "Model")
-        tgl_kir = extract_field(page, "Tanggal Masa Berlaku")
-        nama_pelanggar = extract_field(page, "Nama")
-        no_telp = extract_field(page, "No. Telepon")
-        no_sim = extract_field(page, "No. SIM")
+            const merk = findValue("Merk");
+            const model = findValue("Model");
 
-        merk_model = f"{merk} {model}".strip()
-
-        return {
-            "alasan": alasan,
-            "keterangan": keterangan,
-            "pasal": pasal,
-            "nama_pemilik": nama_pemilik,
-            "alamat_pemilik": alamat_pemilik,
-            "merk_model": merk_model,
-            "tgl_kir": tgl_kir,
-            "nama_pelanggar": nama_pelanggar,
-            "no_telp": no_telp,
-            "no_sim": no_sim
+            return {
+                alasan: findValue("Alasan Disanggah"),
+                keterangan: findValue("Keterangan Sanggahan"),
+                pasal: findValue("Pasal"),
+                nama_pemilik: findValue("Nama Pemilik"),
+                alamat_pemilik: findValue("Alamat"),
+                merk_model: (merk + " " + model).trim(),
+                tgl_kir: findValue("Tanggal Masa Berlaku"),
+                nama_pelanggar: findValue("Nama"),
+                no_telp: findValue("No. Telepon"),
+                no_sim: findValue("No. SIM")
+            };
         }
+    """)
+
+def get_detail_info(page, item, target_kode):
+    """
+    Buka detail melalui URL direct ID atau via UI click sebagai Fallback
+    """
+    item_id = item.get("id") or item.get("id_pelanggaran") or item.get("id_konfirmasi")
+    
+    # Metode 1: Buka via URL Direct ID (jika ID tersedia)
+    if item_id:
+        url_detail = f"{URL_DETAIL_BASE}?id={item_id}&status_konfirmasi=Tersanggah"
+        try:
+            page.goto(url_detail, wait_until="domcontentloaded", timeout=20000)
+            page.wait_for_timeout(1000)
+            return parse_detail_from_page(page)
+        except Exception as e:
+            log(f"Gagal via URL ID ({item_id}): {e}. Mencoba via UI Click...")
+
+    # Metode 2 (Fallback): Cari tombol Detail di UI Tabel Web
+    try:
+        open_tersanggah_page(page)
+        page.wait_for_selector("table tbody tr", timeout=15000)
+        
+        rows = page.locator("table tbody tr").all()
+        for row in rows:
+            if target_kode in row.inner_text():
+                detail_btn = row.locator('a:has-text("Detail"), button:has-text("Detail")')
+                if detail_btn.count() > 0:
+                    detail_btn.first.click()
+                    page.wait_for_load_state("domcontentloaded", timeout=20000)
+                    page.wait_for_timeout(1000)
+                    data = parse_detail_from_page(page)
+                    return data
     except Exception as e:
-        log(f"[WARNING] Gagal mengambil detail ID {item_id}: {e}")
-        return {}
+        log(f"Gagal via UI Fallback: {e}")
+
+    return {}
 
 
 # ============================================================
 # CONVERT DATA & SYNC
 # ============================================================
 
-def convert_item(item, detail_info=None):
-    if detail_info is None:
+def convert_item(item, detail_info):
+    """
+    Memastikan return selalunya tepat 19 elemen array
+    """
+    if not isinstance(detail_info, dict):
         detail_info = {}
-        
+
     return [
         clean(item.get("kode") or item.get("ref_number")),
         clean(item.get("tgl_pelanggaran") or item.get("inserted_date_vl")),
@@ -349,25 +337,16 @@ def kirim_notifikasi_wa(new_rows):
         return
 
     jumlah = len(new_rows)
-    rincian = []
-    
-    for row in new_rows[:5]:
-        kode = row[0]
-        tnkb = row[3]
-        alasan = row[8] or "Tidak ada alasan"
-        rincian.append(f"- *{kode}* ({tnkb})\n  _Alasan:_ {alasan}")
-        
+    rincian = [f"- *{r[0]}* ({r[3]})\n  _Alasan:_ {r[8] or '-'}" for r in new_rows[:5]]
     daftar_rincian = "\n".join(rincian)
-    
     if jumlah > 5:
-        daftar_rincian += f"\n\n...dan {jumlah - 5} data pelanggaran lainnya."
+        daftar_rincian += f"\n\n...dan {jumlah - 5} data lainnya."
 
     pesan = (
         f"🚨 *NOTIFIKASI PELANGGARAN TERSANGGAH* 🚨\n\n"
-        f"Halo Pak/Bu,\n"
-        f"Ada *{jumlah} data pelanggaran tersanggah baru* yang tersinkronisasi ke Google Sheet:\n\n"
+        f"Ada *{jumlah} data pelanggaran tersanggah baru* tersinkronisasi ke Google Sheet:\n\n"
         f"{daftar_rincian}\n\n"
-        f"_Pesan otomatis dari Sistem Sync ETLE HUB_"
+        f"_Pesan otomatis dari ETLE HUB Sync_"
     )
 
     try:
@@ -388,14 +367,12 @@ def kirim_notifikasi_wa(new_rows):
 
 def main():
     log("==================================================")
-    log("STARTING ETLE SYNC PELANGGARAN TERSANGGAH (FULL DETAIL)")
+    log("STARTING ETLE SYNC TERSANGGAH (STABLE FIX)")
     log("==================================================")
-    log(f"Rentang Tanggal API : {DATE_FROM} s/d {DATE_TO}")
     
     validate_environment()
     create_credentials_file()
     
-    # Ambil sheet & daftar KODE yang sudah ada
     sheet = get_sheet()
     existing = prepare_sheet(sheet)
     existing_keys = {clean(row[0]) for row in existing[1:] if row and clean(row[0])}
@@ -403,38 +380,31 @@ def main():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu"
-            ]
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
         )
         try:
             context = browser.new_context(
                 viewport={"width": 1920, "height": 1080},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
             )
             page = context.new_page()
             
-            # 1. Login & Request Data List dari API
             login(page)
             open_tersanggah_page(page)
             
             api_data = []
             for attempt in range(1, MAX_RETRY + 1):
                 try:
-                    log(f"Percobaan ambil API list ({attempt}/{MAX_RETRY})...")
+                    log(f"Mencari data API ({attempt}/{MAX_RETRY})...")
                     api_data = request_api(page)
                     break
                 except Exception as error:
-                    log(f"Gagal mengambil data API list: {error}")
+                    log(f"Gagal API: {error}")
                     if attempt < MAX_RETRY:
                         time.sleep(attempt * 3)
             
-            log(f"Total baris didapatkan dari API: {len(api_data)}")
+            log(f"Total baris dari API: {len(api_data)}")
 
-            # 2. Filter Data Baru & Pull Halaman Detail
             new_rows = []
             api_keys = set()
 
@@ -443,29 +413,25 @@ def main():
                     continue
                     
                 kode = clean(item.get("kode") or item.get("ref_number"))
-                item_id = clean(item.get("id") or item.get("id_pelanggaran"))
                 
-                # Biarkan jika KODE kosong atau sudah pernah disimpan
+                # Jika KODE kosong atau sudah pernah ada di Sheet, lewati
                 if not kode or kode in api_keys or kode in existing_keys:
                     continue
                 
                 api_keys.add(kode)
                 
-                # Fetch halaman detail
-                log(f"Mengambil detail lengkap KODE: {kode} (ID: {item_id})...")
-                detail_info = get_detail_info(page, item_id)
+                log(f"Mengekstrak detail untuk KODE: {kode}...")
+                detail_info = get_detail_info(page, item, kode)
                 
                 row = convert_item(item, detail_info)
                 new_rows.append(row)
 
-            # 3. Tulis Ke Google Sheet & Kirim WhatsApp
             if not new_rows:
                 log("Tidak ada data baru untuk ditulis.")
             else:
                 log(f"Menulis {len(new_rows)} baris baru ke Google Sheet...")
                 sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
                 log("Berhasil memperbarui Google Sheet.")
-                
                 kirim_notifikasi_wa(new_rows)
                 
             log(f"Proses Selesai. Total data baru tersimpan: {len(new_rows)}")
