@@ -2,7 +2,7 @@ import os
 import json
 import time
 import atexit
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import gspread
@@ -20,6 +20,11 @@ URL_LOGIN = "https://etilang-djpd.kemenhub.go.id:9000/main/"
 URL_TERSANGGAH = (
     "https://etilang-djpd.kemenhub.go.id:9000/"
     "admin-etle/terkonfirmasi.php"
+)
+
+URL_DETAIL_BASE = (
+    "https://etilang-djpd.kemenhub.go.id:9000/"
+    "admin-etle/terkonfirmasi_detail.php"
 )
 
 API_URL = (
@@ -42,10 +47,10 @@ SHEET_NAME = "Pelanggaran Tersanggah"
 
 WIB = ZoneInfo("Asia/Jakarta")
 
-# Tanggal dinamis: Tanggal 1 bulan berjalan s/d Hari ini
+# Rentang Tanggal API: Tanggal 1 bulan berjalan s/d Besok Jam 00:00 (Mencakup full 24 jam hari ini)
 now_wib = datetime.now(WIB)
 DATE_FROM = now_wib.replace(day=1).strftime("%d-%m-%Y 00:00")
-DATE_TO = now_wib.strftime("%d-%m-%Y 00:00")
+DATE_TO = (now_wib + timedelta(days=1)).strftime("%d-%m-%Y 00:00")
 
 CREDENTIALS_FILE = "temp_credentials.json"
 MAX_RETRY = 3
@@ -59,6 +64,16 @@ HEADERS = [
     "STATUS",
     "PELANGGARAN",
     "TANGGAL KONFIRMASI",
+    "ALASAN DISANGGAH",
+    "KETERANGAN SANGGAHAN",
+    "PASAL",
+    "NAMA PEMILIK",
+    "ALAMAT PEMILIK",
+    "MERK & MODEL",
+    "TGL MASA BERLAKU KIR",
+    "NAMA PELANGGAR",
+    "NO TELEPON PELANGGAR",
+    "NO SIM PELANGGAR",
     "LAST SYNC"
 ]
 
@@ -144,6 +159,13 @@ def get_sheet():
         
     return sheet
 
+def prepare_sheet(sheet):
+    values = sheet.get_all_values()
+    if not values or values[0] != HEADERS:
+        sheet.update(values=[HEADERS], range_name="A1")
+        return [HEADERS]
+    return values
+
 
 # ============================================================
 # ETLE AUTOMATION (PLAYWRIGHT)
@@ -166,11 +188,11 @@ def login(page):
     page.locator('button:has-text("Login")').click()
     
     try:
-        page.wait_for_load_state("networkidle", timeout=30000)
+        page.wait_for_url("**/admin-etle/**", timeout=30000)
     except Exception:
-        log("Networkidle timeout, melanjutkan proses...")
-    
-    page.wait_for_timeout(2000)
+        log("Redirect URL timeout, melanjutkan...")
+        page.wait_for_timeout(2000)
+        
     log(f"Login selesai. URL aktif: {page.url}")
 
 def open_tersanggah_page(page):
@@ -235,79 +257,117 @@ def request_api(page):
                 
     raise RuntimeError("Struktur JSON API tidak valid.")
 
-def get_api_data():
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu"
-            ]
-        )
-        try:
-            context = browser.new_context(viewport={"width": 1920, "height": 1080})
-            page = context.new_page()
-            
-            login(page)
-            open_tersanggah_page(page)
-            
-            for attempt in range(1, MAX_RETRY + 1):
-                try:
-                    log(f"Percobaan ambil API ({attempt}/{MAX_RETRY})...")
-                    return request_api(page)
-                except Exception as error:
-                    log(f"Gagal mengambil data API: {error}")
-                    if attempt < MAX_RETRY:
-                        time.sleep(attempt * 3)
-            raise RuntimeError("Exceeded maximum retries for API retrieval.")
-        finally:
-            browser.close()
-            log("Browser ditutup.")
+def extract_field(page, label):
+    """
+    Helper untuk mencari pasangan Key-Value dari teks UI
+    """
+    try:
+        loc = page.locator(f'*:text("{label}") + *')
+        if loc.count() > 0:
+            return clean(loc.first.inner_text().strip(" :"))
+    except Exception:
+        pass
+    return ""
+
+def get_detail_info(page, item_id):
+    """
+    Scrape data lengkap dari terkonfirmasi_detail.php?id={item_id}
+    """
+    if not item_id:
+        return {}
+        
+    url_detail = f"{URL_DETAIL_BASE}?id={item_id}&status_konfirmasi=Tersanggah"
+    
+    try:
+        page.goto(url_detail, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(1000)
+        
+        # Ekstrak seluruh field detail yang tersedia
+        alasan = extract_field(page, "Alasan Disanggah")
+        keterangan = extract_field(page, "Keterangan Sanggahan")
+        pasal = extract_field(page, "Pasal")
+        nama_pemilik = extract_field(page, "Nama Pemilik")
+        alamat_pemilik = extract_field(page, "Alamat")
+        merk = extract_field(page, "Merk")
+        model = extract_field(page, "Model")
+        tgl_kir = extract_field(page, "Tanggal Masa Berlaku")
+        nama_pelanggar = extract_field(page, "Nama")
+        no_telp = extract_field(page, "No. Telepon")
+        no_sim = extract_field(page, "No. SIM")
+
+        merk_model = f"{merk} {model}".strip()
+
+        return {
+            "alasan": alasan,
+            "keterangan": keterangan,
+            "pasal": pasal,
+            "nama_pemilik": nama_pemilik,
+            "alamat_pemilik": alamat_pemilik,
+            "merk_model": merk_model,
+            "tgl_kir": tgl_kir,
+            "nama_pelanggar": nama_pelanggar,
+            "no_telp": no_telp,
+            "no_sim": no_sim
+        }
+    except Exception as e:
+        log(f"[WARNING] Gagal mengambil detail ID {item_id}: {e}")
+        return {}
 
 
 # ============================================================
 # CONVERT DATA & SYNC
 # ============================================================
 
-def convert_item(item):
+def convert_item(item, detail_info=None):
+    if detail_info is None:
+        detail_info = {}
+        
     return [
         clean(item.get("kode") or item.get("ref_number")),
         clean(item.get("tgl_pelanggaran") or item.get("inserted_date_vl")),
         clean(item.get("lokasi")),
         clean(item.get("plat_number") or item.get("tnkb")),
-        clean(item.get("warna_kendaraan") or item.get("color")),
+        clean(item.get("warna_kendaraan") or item.get("color")) or "-",
         clean(item.get("status")),
         clean(item.get("report_type") or item.get("pelanggaran")),
         clean(item.get("tgl_konfirmasi") or item.get("confirm_date")),
+        clean(detail_info.get("alasan")),
+        clean(detail_info.get("keterangan")),
+        clean(detail_info.get("pasal")),
+        clean(detail_info.get("nama_pemilik")),
+        clean(detail_info.get("alamat_pemilik")),
+        clean(detail_info.get("merk_model")),
+        clean(detail_info.get("tgl_kir")),
+        clean(detail_info.get("nama_pelanggar")),
+        clean(detail_info.get("no_telp")),
+        clean(detail_info.get("no_sim")),
         datetime.now(WIB).strftime("%Y-%m-%d %H:%M:%S")
     ]
-
-def prepare_sheet(sheet):
-    values = sheet.get_all_values()
-    if not values or values[0] != HEADERS:
-        sheet.update(range_name="A1", values=[HEADERS])
-        return [HEADERS]
-    return values
 
 def kirim_notifikasi_wa(new_rows):
     if not WA_TARGET or not FONNTE_TOKEN:
         return
 
     jumlah = len(new_rows)
-    contoh_kode = [row[0] for row in new_rows[:5] if row and row[0]]
-    daftar_kode = "\n".join(f"- {kode}" for kode in contoh_kode)
+    rincian = []
     
-    if jumlah > len(contoh_kode):
-        daftar_kode += f"\n- ...dan {jumlah - len(contoh_kode)} data lainnya"
+    for row in new_rows[:5]:
+        kode = row[0]
+        tnkb = row[3]
+        alasan = row[8] or "Tidak ada alasan"
+        rincian.append(f"- *{kode}* ({tnkb})\n  _Alasan:_ {alasan}")
+        
+    daftar_rincian = "\n".join(rincian)
+    
+    if jumlah > 5:
+        daftar_rincian += f"\n\n...dan {jumlah - 5} data pelanggaran lainnya."
 
     pesan = (
         f"🚨 *NOTIFIKASI PELANGGARAN TERSANGGAH* 🚨\n\n"
         f"Halo Pak/Bu,\n"
-        f"Ada *{jumlah} data pelanggaran tersanggah baru* tersinkronisasi ke Google Sheet.\n\n"
-        f"{daftar_kode}\n\n"
-        f"_Pesan otomatis dari Sistem Sync ETLE_"
+        f"Ada *{jumlah} data pelanggaran tersanggah baru* yang tersinkronisasi ke Google Sheet:\n\n"
+        f"{daftar_rincian}\n\n"
+        f"_Pesan otomatis dari Sistem Sync ETLE HUB_"
     )
 
     try:
@@ -321,39 +381,6 @@ def kirim_notifikasi_wa(new_rows):
     except Exception as error:
         log(f"[ERROR WA FONNTE] {error}")
 
-def sync_data(data):
-    sheet = get_sheet()
-    existing = prepare_sheet(sheet)
-    existing_keys = {clean(row[0]) for row in existing[1:] if row and clean(row[0])}
-
-    new_rows = []
-    api_keys = set()
-
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-            
-        kode = clean(item.get("kode") or item.get("ref_number"))
-        if not kode or kode in api_keys or kode in existing_keys:
-            continue
-        
-        api_keys.add(kode)
-        new_rows.append(convert_item(item))
-
-    if not new_rows:
-        log("Tidak ada data baru untuk ditulis.")
-        return 0
-
-    start_row = len(existing) + 1
-    end_row = start_row + len(new_rows) - 1
-    range_name = f"A{start_row}:I{end_row}"
-
-    log(f"Menulis {len(new_rows)} baris baru ke range {range_name}...")
-    sheet.update(range_name=range_name, values=new_rows)
-    
-    kirim_notifikasi_wa(new_rows)
-    return len(new_rows)
-
 
 # ============================================================
 # MAIN EXECUTION
@@ -361,18 +388,91 @@ def sync_data(data):
 
 def main():
     log("==================================================")
-    log("STARTING ETLE SYNC PELANGGARAN TERSANGGAH")
+    log("STARTING ETLE SYNC PELANGGARAN TERSANGGAH (FULL DETAIL)")
     log("==================================================")
     log(f"Rentang Tanggal API : {DATE_FROM} s/d {DATE_TO}")
     
     validate_environment()
     create_credentials_file()
     
-    data = get_api_data()
-    log(f"Total baris didapatkan dari API: {len(data)}")
-    
-    new_count = sync_data(data)
-    log(f"Proses Selesai. Total data baru tersimpan: {new_count}")
+    # Ambil sheet & daftar KODE yang sudah ada
+    sheet = get_sheet()
+    existing = prepare_sheet(sheet)
+    existing_keys = {clean(row[0]) for row in existing[1:] if row and clean(row[0])}
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu"
+            ]
+        )
+        try:
+            context = browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+            
+            # 1. Login & Request Data List dari API
+            login(page)
+            open_tersanggah_page(page)
+            
+            api_data = []
+            for attempt in range(1, MAX_RETRY + 1):
+                try:
+                    log(f"Percobaan ambil API list ({attempt}/{MAX_RETRY})...")
+                    api_data = request_api(page)
+                    break
+                except Exception as error:
+                    log(f"Gagal mengambil data API list: {error}")
+                    if attempt < MAX_RETRY:
+                        time.sleep(attempt * 3)
+            
+            log(f"Total baris didapatkan dari API: {len(api_data)}")
+
+            # 2. Filter Data Baru & Pull Halaman Detail
+            new_rows = []
+            api_keys = set()
+
+            for item in api_data:
+                if not isinstance(item, dict):
+                    continue
+                    
+                kode = clean(item.get("kode") or item.get("ref_number"))
+                item_id = clean(item.get("id") or item.get("id_pelanggaran"))
+                
+                # Biarkan jika KODE kosong atau sudah pernah disimpan
+                if not kode or kode in api_keys or kode in existing_keys:
+                    continue
+                
+                api_keys.add(kode)
+                
+                # Fetch halaman detail
+                log(f"Mengambil detail lengkap KODE: {kode} (ID: {item_id})...")
+                detail_info = get_detail_info(page, item_id)
+                
+                row = convert_item(item, detail_info)
+                new_rows.append(row)
+
+            # 3. Tulis Ke Google Sheet & Kirim WhatsApp
+            if not new_rows:
+                log("Tidak ada data baru untuk ditulis.")
+            else:
+                log(f"Menulis {len(new_rows)} baris baru ke Google Sheet...")
+                sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
+                log("Berhasil memperbarui Google Sheet.")
+                
+                kirim_notifikasi_wa(new_rows)
+                
+            log(f"Proses Selesai. Total data baru tersimpan: {len(new_rows)}")
+
+        finally:
+            browser.close()
+            log("Browser ditutup.")
 
 if __name__ == "__main__":
     try:
