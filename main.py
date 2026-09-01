@@ -42,11 +42,17 @@ SHEET_NAME = "Pelanggaran Tersanggah"
 
 WIB = ZoneInfo("Asia/Jakarta")
 
-# Tanggal dinamis: Tanggal 1 bulan berjalan s/d Hari ini
-now_wib = datetime.now(WIB)
-DATE_FROM = now_wib.replace(day=1).strftime("%d-%m-%Y 00:00")
-DATE_TO = now_wib.strftime("%d-%m-%Y 00:00")
+# ============================================================
+# RENTANG TANGGAL PENARIKAN DATA
+# ============================================================
 
+now_wib = datetime.now(WIB)
+
+# Mulai selalu dari 1 Agustus 2026
+DATE_FROM = "01-08-2026 00:00"
+
+# Sampai tanggal hari ini
+DATE_TO = now_wib.strftime("%d-%m-%Y 23:59")
 CREDENTIALS_FILE = "temp_credentials.json"
 MAX_RETRY = 3
 
