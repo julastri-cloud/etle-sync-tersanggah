@@ -1,3 +1,4 @@
+```python
 import os
 import json
 import time
@@ -12,10 +13,17 @@ import requests
 
 
 # ============================================================
-# KONFIGURASI ETLE TERSANGGAH
+# ETLE SYNC PELANGGARAN TERSANGGAH - V2
 # ============================================================
 
-URL_LOGIN = "https://etilang-djpd.kemenhub.go.id:9000/main/"
+
+# ============================================================
+# KONFIGURASI URL ETLE
+# ============================================================
+
+URL_LOGIN = (
+    "https://etilang-djpd.kemenhub.go.id:9000/main/"
+)
 
 URL_TERSANGGAH = (
     "https://etilang-djpd.kemenhub.go.id:9000/"
@@ -32,48 +40,85 @@ API_URL = (
 # GITHUB SECRETS
 # ============================================================
 
-EMAIL_ETLE = os.environ.get("EMAIL_ETLE", "")
-PASSWORD_ETLE = os.environ.get("PASSWORD_ETLE", "")
-GCP_SA_KEY = os.environ.get("GCP_SA_KEY", "")
+EMAIL_ETLE = os.environ.get(
+    "EMAIL_ETLE",
+    ""
+)
 
-WA_TARGET = os.environ.get("WA_TARGET", "")
-FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN", "")
+PASSWORD_ETLE = os.environ.get(
+    "PASSWORD_ETLE",
+    ""
+)
+
+GCP_SA_KEY = os.environ.get(
+    "GCP_SA_KEY",
+    ""
+)
+
+WA_TARGET = os.environ.get(
+    "WA_TARGET",
+    ""
+)
+
+FONNTE_TOKEN = os.environ.get(
+    "FONNTE_TOKEN",
+    ""
+)
 
 
 # ============================================================
 # GOOGLE SHEETS
 # ============================================================
 
-SPREADSHEET_ID = "1oOFiSkYQ6v05WhZgkgvhlJsX0ApUuQvDlqO5Yzb47AI"
+SPREADSHEET_ID = (
+    "1oOFiSkYQ6v05WhZgkgvhlJsX0ApUuQvDlqO5Yzb47AI"
+)
 
 SHEET_NAME = "Pelanggaran Tersanggah"
 
 
 # ============================================================
-# WAKTU
+# TIMEZONE
 # ============================================================
 
-WIB = ZoneInfo("Asia/Jakarta")
+WIB = ZoneInfo(
+    "Asia/Jakarta"
+)
 
 
 # ============================================================
-# RENTANG TANGGAL PENARIKAN DATA
+# RENTANG TANGGAL
 # ============================================================
 
 now_wib = datetime.now(WIB)
 
-# MULAI SELALU DARI 1 AGUSTUS 2026
+# ============================================================
+# MULAI SELALU 1 AGUSTUS 2026
+# ============================================================
+
 DATE_FROM = "01-08-2026 00:00"
 
-# AKHIR SAMPAI HARI INI PUKUL 23:59
-DATE_TO = now_wib.strftime("%d-%m-%Y 23:59")
+# ============================================================
+# SAMPAI HARI INI 23:59
+# ============================================================
+
+DATE_TO = now_wib.strftime(
+    "%d-%m-%Y 23:59"
+)
 
 
 # ============================================================
-# FILE & RETRY
+# FILE CREDENTIALS SEMENTARA
 # ============================================================
 
-CREDENTIALS_FILE = "temp_credentials.json"
+CREDENTIALS_FILE = (
+    "temp_credentials.json"
+)
+
+
+# ============================================================
+# MAX RETRY API
+# ============================================================
 
 MAX_RETRY = 3
 
@@ -96,24 +141,29 @@ HEADERS = [
 
 
 # ============================================================
-# HELPER
+# LOGGING
 # ============================================================
 
 def log(message):
-    """
-    Menampilkan log dengan waktu WIB.
-    """
+
+    timestamp = datetime.now(
+        WIB
+    ).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
     print(
-        f"[{datetime.now(WIB).strftime('%Y-%m-%d %H:%M:%S')}] "
-        f"{message}",
+        f"[{timestamp}] {message}",
         flush=True
     )
 
 
+# ============================================================
+# CLEAN VALUE
+# ============================================================
+
 def clean(value):
-    """
-    Membersihkan nilai agar aman dimasukkan ke Google Sheets.
-    """
+
     if value is None:
         return ""
 
@@ -121,33 +171,38 @@ def clean(value):
 
 
 # ============================================================
-# CLEANUP TEMPORARY CREDENTIALS
+# CLEANUP CREDENTIALS
 # ============================================================
 
 def cleanup_credentials():
-    """
-    Menghapus file credentials sementara.
-    """
 
-    if os.path.exists(CREDENTIALS_FILE):
+    if not os.path.exists(
+        CREDENTIALS_FILE
+    ):
+        return
 
-        try:
-            os.remove(CREDENTIALS_FILE)
+    try:
 
-            log(
-                "File temporary credentials "
-                "berhasil dihapus."
-            )
+        os.remove(
+            CREDENTIALS_FILE
+        )
 
-        except Exception as error:
+        log(
+            "File temporary credentials "
+            "berhasil dihapus."
+        )
 
-            log(
-                f"Gagal menghapus temporary credentials: "
-                f"{error}"
-            )
+    except Exception as error:
+
+        log(
+            "Gagal menghapus temporary "
+            f"credentials: {error}"
+        )
 
 
-atexit.register(cleanup_credentials)
+atexit.register(
+    cleanup_credentials
+)
 
 
 # ============================================================
@@ -155,6 +210,10 @@ atexit.register(cleanup_credentials)
 # ============================================================
 
 def validate_environment():
+
+    log(
+        "Memvalidasi environment..."
+    )
 
     if not EMAIL_ETLE:
 
@@ -174,15 +233,26 @@ def validate_environment():
             "Secret GCP_SA_KEY belum diset."
         )
 
-    if not WA_TARGET or not FONNTE_TOKEN:
+    if not WA_TARGET:
 
         log(
-            "PERINGATAN: WA_TARGET atau "
-            "FONNTE_TOKEN kosong."
+            "PERINGATAN: WA_TARGET kosong."
         )
 
+    if not FONNTE_TOKEN:
+
         log(
-            "Notifikasi WhatsApp akan dilewati."
+            "PERINGATAN: FONNTE_TOKEN kosong."
+        )
+
+    if (
+        not WA_TARGET
+        or not FONNTE_TOKEN
+    ):
+
+        log(
+            "Notifikasi WhatsApp "
+            "akan dilewati."
         )
 
     log(
@@ -191,14 +261,20 @@ def validate_environment():
 
 
 # ============================================================
-# BUAT FILE CREDENTIALS SEMENTARA
+# CREATE GOOGLE SERVICE ACCOUNT FILE
 # ============================================================
 
 def create_credentials_file():
 
+    log(
+        "Membuat temporary credentials..."
+    )
+
     try:
 
-        sa_dict = json.loads(GCP_SA_KEY)
+        service_account_data = json.loads(
+            GCP_SA_KEY
+        )
 
         with open(
             CREDENTIALS_FILE,
@@ -207,7 +283,7 @@ def create_credentials_file():
         ) as file:
 
             json.dump(
-                sa_dict,
+                service_account_data,
                 file
             )
 
@@ -219,18 +295,19 @@ def create_credentials_file():
     except json.JSONDecodeError:
 
         raise RuntimeError(
-            "Secret GCP_SA_KEY bukan format JSON yang valid."
+            "GCP_SA_KEY bukan JSON yang valid."
         )
 
     except Exception as error:
 
         raise RuntimeError(
-            f"Gagal membuat file credentials: {error}"
+            "Gagal membuat temporary "
+            f"credentials: {error}"
         )
 
 
 # ============================================================
-# GOOGLE SHEETS SERVICE
+# GOOGLE SHEETS
 # ============================================================
 
 def get_sheet():
@@ -244,12 +321,16 @@ def get_sheet():
         "Otentikasi Google Sheets..."
     )
 
-    creds = Credentials.from_service_account_file(
-        CREDENTIALS_FILE,
-        scopes=scopes
+    credentials = (
+        Credentials.from_service_account_file(
+            CREDENTIALS_FILE,
+            scopes=scopes
+        )
     )
 
-    client = gspread.authorize(creds)
+    client = gspread.authorize(
+        credentials
+    )
 
     log(
         "Membuka spreadsheet..."
@@ -266,13 +347,15 @@ def get_sheet():
         )
 
         log(
-            f"Worksheet '{SHEET_NAME}' ditemukan."
+            f"Worksheet '{SHEET_NAME}' "
+            "ditemukan."
         )
 
     except gspread.WorksheetNotFound:
 
         log(
-            f"Worksheet '{SHEET_NAME}' belum ada."
+            f"Worksheet '{SHEET_NAME}' "
+            "belum ada."
         )
 
         log(
@@ -285,8 +368,14 @@ def get_sheet():
             cols=len(HEADERS)
         )
 
+        sheet.update(
+            range_name="A1",
+            values=[HEADERS]
+        )
+
         log(
-            "Worksheet baru berhasil dibuat."
+            "Worksheet baru berhasil "
+            "dibuat."
         )
 
     return sheet
@@ -352,8 +441,8 @@ def login(page):
     except Exception:
 
         log(
-            "Networkidle timeout, "
-            "melanjutkan proses..."
+            "Networkidle timeout. "
+            "Melanjutkan proses..."
         )
 
     page.wait_for_timeout(
@@ -361,19 +450,23 @@ def login(page):
     )
 
     log(
-        f"Login selesai. URL aktif: "
-        f"{page.url}"
+        "Login selesai."
+    )
+
+    log(
+        f"URL aktif: {page.url}"
     )
 
 
 # ============================================================
-# BUKA HALAMAN TERSANGGAH
+# OPEN TERSANGGAH PAGE
 # ============================================================
 
 def open_tersanggah_page(page):
 
     log(
-        "Membuka halaman Pelanggaran Tersanggah..."
+        "Membuka halaman "
+        "Pelanggaran Tersanggah..."
     )
 
     page.goto(
@@ -387,8 +480,11 @@ def open_tersanggah_page(page):
     )
 
     log(
-        f"Halaman tersanggah aktif: "
-        f"{page.url}"
+        "Halaman tersanggah aktif."
+    )
+
+    log(
+        f"URL aktif: {page.url}"
     )
 
 
@@ -402,12 +498,16 @@ def request_api(page):
         time.time() * 1000
     )
 
-    date_from_encoded = requests.utils.quote(
-        DATE_FROM
+    date_from_encoded = (
+        requests.utils.quote(
+            DATE_FROM
+        )
     )
 
-    date_to_encoded = requests.utils.quote(
-        DATE_TO
+    date_to_encoded = (
+        requests.utils.quote(
+            DATE_TO
+        )
     )
 
     api_url = (
@@ -442,91 +542,85 @@ def request_api(page):
         "=================================================="
     )
 
+    # ========================================================
+    # PERBAIKAN V2:
+    # JavaScript page.evaluate dibuat sederhana
+    # agar tidak terjadi SyntaxError.
+    # ========================================================
+
     result = page.evaluate(
         """
         async (url) => {
+            const response = await fetch(url, {
+                method: "GET",
+                credentials: "include",
+                cache: "no-store",
+                headers: {
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
+                    "X-Requested-With": "XMLHttpRequest"
+                }
+            });
 
-            try {
+            const body = await response.text();
 
-                const response = await fetch(
-                    url,
-                    {
-                        method: "GET",
-
-                        credentials: "include",
-
-                        cache: "no-store",
-
-                        headers: {
-                            "Accept":
-                                "application/json, "
-                                "text/javascript, "
-                                "*/*; q=0.01",
-
-                            "X-Requested-With":
-                                "XMLHttpRequest"
-                        }
-                    }
-                );
-
-                const text =
-                    await response.text();
-
-                return {
-                    success: true,
-
-                    status:
-                        response.status,
-
-                    contentType:
-                        response.headers.get(
-                            "content-type"
-                        ) || "",
-
-                    body:
-                        text
-                };
-
-            } catch (error) {
-
-                return {
-                    success: false,
-
-                    status: 0,
-
-                    error:
-                        String(error)
-                };
-            }
+            return {
+                status: response.status,
+                contentType: response.headers.get("content-type") || "",
+                body: body
+            };
         }
         """,
         api_url
     )
 
-    if not result["success"]:
+    status = result.get(
+        "status",
+        0
+    )
+
+    body = result.get(
+        "body",
+        ""
+    )
+
+    content_type = result.get(
+        "contentType",
+        ""
+    )
+
+    # ========================================================
+    # VALIDASI HTTP
+    # ========================================================
+
+    log(
+        f"HTTP Status API: {status}"
+    )
+
+    log(
+        f"Content-Type API: {content_type}"
+    )
+
+    if status != 200:
 
         raise RuntimeError(
-            "Fetch API gagal: "
-            f"{result.get('error')}"
+            f"API HTTP {status}. "
+            f"Body: {body[:500]}"
         )
 
-    if result["status"] != 200:
-
-        raise RuntimeError(
-            f"API HTTP {result['status']}. "
-            f"Body: {result['body'][:500]}"
-        )
-
-    if not result["body"].strip():
+    if not body.strip():
 
         raise RuntimeError(
             "API mengembalikan body kosong."
         )
 
+    # ========================================================
+    # PARSE JSON
+    # ========================================================
+
     try:
 
         parsed = json.loads(
-            result["body"]
+            body
         )
 
     except json.JSONDecodeError as error:
@@ -536,13 +630,8 @@ def request_api(page):
         )
 
         log(
-            f"Content-Type: "
-            f"{result.get('contentType')}"
-        )
-
-        log(
-            f"Response awal: "
-            f"{result['body'][:500]}"
+            f"Response awal API: "
+            f"{body[:1000]}"
         )
 
         raise RuntimeError(
@@ -550,10 +639,13 @@ def request_api(page):
         )
 
     # ========================================================
-    # JIKA RESPONSE LANGSUNG LIST
+    # RESPONSE LANGSUNG LIST
     # ========================================================
 
-    if isinstance(parsed, list):
+    if isinstance(
+        parsed,
+        list
+    ):
 
         log(
             f"API mengembalikan "
@@ -563,10 +655,13 @@ def request_api(page):
         return parsed
 
     # ========================================================
-    # JIKA RESPONSE DI DALAM OBJECT
+    # RESPONSE OBJECT
     # ========================================================
 
-    if isinstance(parsed, dict):
+    if isinstance(
+        parsed,
+        dict
+    ):
 
         for key in [
             "data",
@@ -575,28 +670,35 @@ def request_api(page):
             "aaData"
         ]:
 
+            value = parsed.get(
+                key
+            )
+
             if isinstance(
-                parsed.get(key),
+                value,
                 list
             ):
 
-                data = parsed[key]
-
                 log(
                     f"API mengembalikan "
-                    f"{len(data)} data "
+                    f"{len(value)} data "
                     f"melalui key '{key}'."
                 )
 
-                return data
+                return value
+
+    # ========================================================
+    # STRUKTUR JSON TIDAK DIKENALI
+    # ========================================================
 
     raise RuntimeError(
-        "Struktur JSON API tidak valid."
+        "Struktur JSON API tidak dikenali. "
+        f"Response: {body[:1000]}"
     )
 
 
 # ============================================================
-# AMBIL DATA API DENGAN PLAYWRIGHT
+# GET API DATA
 # ============================================================
 
 def get_api_data():
@@ -608,7 +710,9 @@ def get_api_data():
         )
 
         browser = playwright.chromium.launch(
+
             headless=True,
+
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
@@ -620,6 +724,7 @@ def get_api_data():
         try:
 
             context = browser.new_context(
+
                 viewport={
                     "width": 1920,
                     "height": 1080
@@ -632,16 +737,20 @@ def get_api_data():
             # LOGIN
             # ------------------------------------------------
 
-            login(page)
+            login(
+                page
+            )
 
             # ------------------------------------------------
             # BUKA HALAMAN
             # ------------------------------------------------
 
-            open_tersanggah_page(page)
+            open_tersanggah_page(
+                page
+            )
 
             # ------------------------------------------------
-            # REQUEST API + RETRY
+            # RETRY API
             # ------------------------------------------------
 
             for attempt in range(
@@ -656,9 +765,11 @@ def get_api_data():
                         f"({attempt}/{MAX_RETRY})..."
                     )
 
-                    return request_api(
+                    data = request_api(
                         page
                     )
+
+                    return data
 
                 except Exception as error:
 
@@ -676,7 +787,7 @@ def get_api_data():
                         log(
                             f"Menunggu "
                             f"{wait_seconds} detik "
-                            f"sebelum retry..."
+                            "sebelum retry..."
                         )
 
                         time.sleep(
@@ -698,68 +809,97 @@ def get_api_data():
 
 
 # ============================================================
-# CONVERT DATA API
+# CONVERT API ITEM
 # ============================================================
 
 def convert_item(item):
 
     return [
 
+        # ----------------------------------------------------
         # KODE
+        # ----------------------------------------------------
+
         clean(
             item.get("kode")
             or item.get("ref_number")
         ),
 
+        # ----------------------------------------------------
         # TANGGAL PELANGGARAN
+        # ----------------------------------------------------
+
         clean(
             item.get("tgl_pelanggaran")
             or item.get("inserted_date_vl")
         ),
 
+        # ----------------------------------------------------
         # LOKASI
+        # ----------------------------------------------------
+
         clean(
             item.get("lokasi")
         ),
 
+        # ----------------------------------------------------
         # TNKB
+        # ----------------------------------------------------
+
         clean(
             item.get("plat_number")
             or item.get("tnkb")
         ),
 
-        # WARNA
+        # ----------------------------------------------------
+        # WARNA KENDARAAN
+        # ----------------------------------------------------
+
         clean(
             item.get("warna_kendaraan")
             or item.get("color")
         ),
 
+        # ----------------------------------------------------
         # STATUS
+        # ----------------------------------------------------
+
         clean(
             item.get("status")
         ),
 
+        # ----------------------------------------------------
         # PELANGGARAN
+        # ----------------------------------------------------
+
         clean(
             item.get("report_type")
             or item.get("pelanggaran")
         ),
 
+        # ----------------------------------------------------
         # TANGGAL KONFIRMASI
+        # ----------------------------------------------------
+
         clean(
             item.get("tgl_konfirmasi")
             or item.get("confirm_date")
         ),
 
+        # ----------------------------------------------------
         # LAST SYNC
-        datetime.now(WIB).strftime(
+        # ----------------------------------------------------
+
+        datetime.now(
+            WIB
+        ).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
     ]
 
 
 # ============================================================
-# PERSIAPAN GOOGLE SHEETS
+# PREPARE SHEET
 # ============================================================
 
 def prepare_sheet(sheet):
@@ -770,14 +910,18 @@ def prepare_sheet(sheet):
 
     values = sheet.get_all_values()
 
-    # --------------------------------------------------------
-    # Jika sheet kosong
-    # --------------------------------------------------------
+    # ========================================================
+    # SHEET KOSONG
+    # ========================================================
 
     if not values:
 
         log(
-            "Sheet kosong. Membuat header..."
+            "Sheet kosong."
+        )
+
+        log(
+            "Membuat header..."
         )
 
         sheet.update(
@@ -785,21 +929,19 @@ def prepare_sheet(sheet):
             values=[HEADERS]
         )
 
-        return [HEADERS]
+        return [
+            HEADERS
+        ]
 
-    # --------------------------------------------------------
-    # Jika header berbeda
-    # --------------------------------------------------------
+    # ========================================================
+    # HEADER TIDAK SESUAI
+    # ========================================================
 
     if values[0] != HEADERS:
 
         log(
-            "Header Google Sheets berbeda "
-            "dengan konfigurasi."
-        )
-
-        log(
-            "Memperbarui header..."
+            "Header Google Sheets "
+            "tidak sesuai."
         )
 
         sheet.update(
@@ -813,15 +955,20 @@ def prepare_sheet(sheet):
 
 
 # ============================================================
-# NOTIFIKASI WHATSAPP FONNTE
+# KIRIM NOTIFIKASI WHATSAPP
 # ============================================================
 
-def kirim_notifikasi_wa(new_rows):
+def kirim_notifikasi_wa(
+    new_rows
+):
 
     if not WA_TARGET:
 
         log(
-            "WA_TARGET kosong. "
+            "WA_TARGET kosong."
+        )
+
+        log(
             "Notifikasi WA dilewati."
         )
 
@@ -830,7 +977,10 @@ def kirim_notifikasi_wa(new_rows):
     if not FONNTE_TOKEN:
 
         log(
-            "FONNTE_TOKEN kosong. "
+            "FONNTE_TOKEN kosong."
+        )
+
+        log(
             "Notifikasi WA dilewati."
         )
 
@@ -840,9 +990,9 @@ def kirim_notifikasi_wa(new_rows):
         new_rows
     )
 
-    # --------------------------------------------------------
-    # Ambil maksimal 5 kode untuk contoh pesan
-    # --------------------------------------------------------
+    # ========================================================
+    # AMBIL KODE MAKSIMAL 5
+    # ========================================================
 
     contoh_kode = [
 
@@ -850,7 +1000,8 @@ def kirim_notifikasi_wa(new_rows):
 
         for row in new_rows[:5]
 
-        if row and row[0]
+        if row
+        and row[0]
     ]
 
     daftar_kode = "\n".join(
@@ -865,10 +1016,15 @@ def kirim_notifikasi_wa(new_rows):
     ):
 
         daftar_kode += (
-            f"\n- ...dan "
+
+            "\n- ...dan "
             f"{jumlah - len(contoh_kode)} "
-            f"data lainnya"
+            "data lainnya"
         )
+
+    # ========================================================
+    # PESAN
+    # ========================================================
 
     pesan = (
 
@@ -888,10 +1044,15 @@ def kirim_notifikasi_wa(new_rows):
         "Sistem Sync ETLE_"
     )
 
+    # ========================================================
+    # KIRIM
+    # ========================================================
+
     try:
 
         log(
-            "Mengirim notifikasi WhatsApp..."
+            "Mengirim notifikasi "
+            "WhatsApp melalui Fonnte..."
         )
 
         response = requests.post(
@@ -929,7 +1090,7 @@ def kirim_notifikasi_wa(new_rows):
             )
 
             log(
-                f"Respon Notifikasi WA: "
+                f"Respon Fonnte: "
                 f"{response_json}"
             )
 
@@ -949,10 +1110,22 @@ def kirim_notifikasi_wa(new_rows):
 
 
 # ============================================================
-# SYNC DATA KE GOOGLE SHEETS
+# SYNC DATA
 # ============================================================
 
 def sync_data(data):
+
+    log(
+        "=================================================="
+    )
+
+    log(
+        "MEMULAI SINKRONISASI GOOGLE SHEETS"
+    )
+
+    log(
+        "=================================================="
+    )
 
     sheet = get_sheet()
 
@@ -960,9 +1133,9 @@ def sync_data(data):
         sheet
     )
 
-    # --------------------------------------------------------
-    # Ambil semua KODE yang sudah ada
-    # --------------------------------------------------------
+    # ========================================================
+    # KODE YANG SUDAH ADA
+    # ========================================================
 
     existing_keys = {
 
@@ -970,7 +1143,8 @@ def sync_data(data):
 
         for row in existing[1:]
 
-        if row and clean(row[0])
+        if row
+        and clean(row[0])
     }
 
     log(
@@ -979,9 +1153,9 @@ def sync_data(data):
         f"{len(existing_keys)}"
     )
 
-    # --------------------------------------------------------
-    # Variabel tracking
-    # --------------------------------------------------------
+    # ========================================================
+    # VARIABEL
+    # ========================================================
 
     new_rows = []
 
@@ -993,9 +1167,9 @@ def sync_data(data):
 
     invalid_data = 0
 
-    # --------------------------------------------------------
-    # Proses data API
-    # --------------------------------------------------------
+    # ========================================================
+    # PROSES DATA API
+    # ========================================================
 
     for item in data:
 
@@ -1015,7 +1189,7 @@ def sync_data(data):
         )
 
         # ----------------------------------------------------
-        # KODE kosong
+        # KODE KOSONG
         # ----------------------------------------------------
 
         if not kode:
@@ -1025,7 +1199,7 @@ def sync_data(data):
             continue
 
         # ----------------------------------------------------
-        # Duplikat dalam API
+        # DUPLIKAT DALAM API
         # ----------------------------------------------------
 
         if kode in api_keys:
@@ -1039,7 +1213,7 @@ def sync_data(data):
         )
 
         # ----------------------------------------------------
-        # Sudah ada di Google Sheet
+        # SUDAH ADA DI SHEET
         # ----------------------------------------------------
 
         if kode in existing_keys:
@@ -1049,7 +1223,7 @@ def sync_data(data):
             continue
 
         # ----------------------------------------------------
-        # Data baru
+        # DATA BARU
         # ----------------------------------------------------
 
         new_rows.append(
@@ -1057,7 +1231,7 @@ def sync_data(data):
         )
 
     # ========================================================
-    # LAPORAN HASIL FILTER
+    # LAPORAN
     # ========================================================
 
     log(
@@ -1106,11 +1280,11 @@ def sync_data(data):
         return 0
 
     # ========================================================
-    # TAMPILKAN DATA BARU
+    # DAFTAR DATA BARU
     # ========================================================
 
     log(
-        "Daftar KODE baru:"
+        "KODE DATA BARU:"
     )
 
     for row in new_rows:
@@ -1120,12 +1294,12 @@ def sync_data(data):
         )
 
     # ========================================================
-    # TENTUKAN RANGE
+    # RANGE GOOGLE SHEETS
     # ========================================================
 
-    start_row = len(
-        existing
-    ) + 1
+    start_row = (
+        len(existing) + 1
+    )
 
     end_row = (
         start_row
@@ -1138,13 +1312,12 @@ def sync_data(data):
     )
 
     log(
-        f"Menulis "
-        f"{len(new_rows)} baris baru "
-        f"ke range {range_name}..."
+        f"Menulis {len(new_rows)} "
+        f"baris ke {range_name}..."
     )
 
     # ========================================================
-    # UPDATE GOOGLE SHEETS
+    # TULIS DATA
     # ========================================================
 
     sheet.update(
@@ -1155,11 +1328,12 @@ def sync_data(data):
     )
 
     log(
-        "Google Sheets berhasil diperbarui."
+        "Google Sheets berhasil "
+        "diperbarui."
     )
 
     # ========================================================
-    # KIRIM NOTIFIKASI WA
+    # NOTIFIKASI WA
     # ========================================================
 
     kirim_notifikasi_wa(
@@ -1183,12 +1357,16 @@ def main():
 
     log(
         "STARTING ETLE SYNC "
-        "PELANGGARAN TERSANGGAH"
+        "PELANGGARAN TERSANGGAH V2"
     )
 
     log(
         "=================================================="
     )
+
+    # ========================================================
+    # INFORMASI TANGGAL
+    # ========================================================
 
     log(
         f"Rentang Tanggal API : "
@@ -1200,21 +1378,26 @@ def main():
         "ditetapkan: 01-08-2026"
     )
 
-    # --------------------------------------------------------
+    log(
+        "Tanggal akhir otomatis "
+        "mengikuti hari eksekusi."
+    )
+
+    # ========================================================
     # VALIDASI
-    # --------------------------------------------------------
+    # ========================================================
 
     validate_environment()
 
-    # --------------------------------------------------------
+    # ========================================================
     # CREDENTIALS
-    # --------------------------------------------------------
+    # ========================================================
 
     create_credentials_file()
 
-    # --------------------------------------------------------
-    # AMBIL DATA ETLE
-    # --------------------------------------------------------
+    # ========================================================
+    # AMBIL DATA API
+    # ========================================================
 
     data = get_api_data()
 
@@ -1223,24 +1406,24 @@ def main():
         f"dari API: {len(data)}"
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # SYNC
-    # --------------------------------------------------------
+    # ========================================================
 
     new_count = sync_data(
         data
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # SELESAI
-    # --------------------------------------------------------
+    # ========================================================
 
     log(
         "=================================================="
     )
 
     log(
-        f"PROSES SELESAI"
+        "PROSES SELESAI"
     )
 
     log(
@@ -1286,3 +1469,4 @@ if __name__ == "__main__":
     finally:
 
         cleanup_credentials()
+```
