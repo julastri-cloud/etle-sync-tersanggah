@@ -1,11 +1,13 @@
 name: ETLE Sync Pelanggaran Tersanggah
 
 on:
-  # Menjalankan secara otomatis setiap jam 06:00 & 18:00 WIB (23:00 & 11:00 UTC)
+  # Pelanggaran Tersanggah - 4 kali sehari / setiap 6 jam
+  # UTC 00:37, 06:37, 12:37, 18:37
+  # WIB 07:37, 13:37, 19:37, 01:37
   schedule:
-    - cron: '0 23,11 * * *'
-  
-  # Memungkinkan untuk dijalankan secara manual kapan saja dari tombol 'Run workflow'
+    - cron: '37 0,6,12,18 * * *'
+
+  # Tetap bisa dijalankan manual
   workflow_dispatch:
 
 jobs:
